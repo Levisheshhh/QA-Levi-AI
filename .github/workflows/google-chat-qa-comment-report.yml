@@ -110,40 +110,48 @@ jobs:
             const browser = fieldValue("Browser") || "Not specified";
             const status = fieldValue("Status") || "Not specified";
 
-            const ignoredPrefixes = [
-              "environment:",
-              "browser:",
-              "mobile device:",
-              "date:",
-              "status:",
-              "expected:",
-              "comment:",
-              "repo:",
-              "project:",
-              "signal:",
-            ];
+            const isAttachmentOrProof = (line) => {
+              return /^https?:\/\//i.test(line)
+                || /^<img\b/i.test(line)
+                || /^!\[.*\]\(/.test(line)
+                || /^vid(eo)?:/i.test(line)
+                || /^screenshots?:/i.test(line)
+                || /^images?:/i.test(line)
+                || /^evidence:/i.test(line)
+                || /^attachment:/i.test(line);
+            };
 
-            const findingStartIndex = normalizedLines.findIndex((line) => {
-              return /^findings?:?$/i.test(line) || /^the (ff|following).*(failed|passed)/i.test(line);
-            });
+            const isFindingStopLine = (line) => {
+              return isAttachmentOrProof(line)
+                || /^[-_*]{3,}$/.test(line)
+                || /^(environment|browser|mobile device|date|status|expected|actual|description|steps?|scenario|objective|result|note|comment|repo|project|signal):/i.test(line)
+                || /^the (ff|following).*(failed|passed)/i.test(line)
+                || /^go-live ticket review/i.test(line);
+            };
 
-            const candidateLines = (findingStartIndex >= 0
-              ? normalizedLines.slice(findingStartIndex + 1)
-              : normalizedLines
-            ).filter((line) => {
-              const lower = line.toLowerCase();
-              return !ignoredPrefixes.some((prefix) => lower.startsWith(prefix));
-            });
+            const extractFindings = () => {
+              const startIndex = normalizedLines.findIndex((line) => /^findings?:/i.test(line));
+              if (startIndex === -1) return [];
 
-            const findingLines = candidateLines
-              .filter((line) => {
-                return !/^[-_*]{3,}$/.test(line) && !/^<img\b/i.test(line);
-              })
-              .slice(0, 12);
+              const firstLine = normalizedLines[startIndex];
+              const inlineFinding = firstLine.slice(firstLine.indexOf(":") + 1).trim();
+              const lines = inlineFinding ? [inlineFinding] : [];
 
+              for (const line of normalizedLines.slice(startIndex + 1)) {
+                if (isFindingStopLine(line)) break;
+                lines.push(line);
+              }
+
+              return lines
+                .map((line) => line.replace(/^\s*[-*]\s+/, "").trim())
+                .filter(Boolean)
+                .slice(0, 12);
+            };
+
+            const findingLines = extractFindings();
             const findings = findingLines.length
               ? findingLines.join("\n")
-              : "No specific finding text detected. Open the ticket comment for full details.";
+              : "No findings were entered in a Findings: section.";
 
             const chatText = [
               `*New ticket comment report*`,
