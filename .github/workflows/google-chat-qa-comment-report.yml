@@ -30,8 +30,6 @@ jobs:
               return;
             }
 
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
             const issue = context.payload.issue;
             const comment = context.payload.comment;
             const projectOwner = process.env.PROJECT_OWNER;
@@ -94,10 +92,6 @@ jobs:
               return;
             }
 
-            const projectStatus = projectItem.fieldValues.nodes.find((value) => {
-              return value.field?.name?.toLowerCase() === "status";
-            })?.name || "No project status";
-
             const body = comment.body || "";
             const normalizedLines = body
               .replace(/\r/g, "")
@@ -105,38 +99,62 @@ jobs:
               .map((line) => line.trim())
               .filter(Boolean);
 
-            const findingKeywords = /\b(failed|failure|bug|issue|finding|findings|blocked|blocker|for validation|passed|status|environment|browser|expected|actual|decision|approve|condition|todo|follow[- ]?up|action)\b/i;
-            const findingLines = normalizedLines
-              .filter((line) => findingKeywords.test(line))
+            const fieldValue = (name) => {
+              const match = normalizedLines.find((line) => {
+                return line.toLowerCase().startsWith(`${name.toLowerCase()}:`);
+              });
+              return match ? match.slice(match.indexOf(":") + 1).trim() : "";
+            };
+
+            const environment = fieldValue("Environment") || "Not specified";
+            const browser = fieldValue("Browser") || "Not specified";
+            const status = fieldValue("Status") || "Not specified";
+
+            const ignoredPrefixes = [
+              "environment:",
+              "browser:",
+              "mobile device:",
+              "date:",
+              "status:",
+              "expected:",
+              "comment:",
+              "repo:",
+              "project:",
+              "signal:",
+            ];
+
+            const findingStartIndex = normalizedLines.findIndex((line) => {
+              return /^findings?:?$/i.test(line) || /^the (ff|following).*(failed|passed)/i.test(line);
+            });
+
+            const candidateLines = (findingStartIndex >= 0
+              ? normalizedLines.slice(findingStartIndex + 1)
+              : normalizedLines
+            ).filter((line) => {
+              const lower = line.toLowerCase();
+              return !ignoredPrefixes.some((prefix) => lower.startsWith(prefix));
+            });
+
+            const findingLines = candidateLines
+              .filter((line) => {
+                return !/^[-_*]{3,}$/.test(line) && !/^<img\b/i.test(line);
+              })
               .slice(0, 12);
 
-            const summary = findingLines.length
+            const findings = findingLines.length
               ? findingLines.join("\n")
-              : normalizedLines.slice(0, 8).join("\n") || "(No comment text)";
-
-            const failedCount = (body.match(/\bfailed\b/gi) || []).length;
-            const passedCount = (body.match(/\bpassed\b/gi) || []).length;
-            const needsValidation = /\bfor validation\b/i.test(body);
-            const hasBlocker = /\b(blocked|blocker|asap|condition)\b/i.test(body);
-
-            const statusParts = [];
-            if (failedCount) statusParts.push(`${failedCount} failed mention${failedCount === 1 ? "" : "s"}`);
-            if (passedCount) statusParts.push(`${passedCount} passed mention${passedCount === 1 ? "" : "s"}`);
-            if (needsValidation) statusParts.push("needs validation");
-            if (hasBlocker) statusParts.push("blocker/condition keyword");
-            const signal = statusParts.length ? statusParts.join(" | ") : "general comment";
+              : "No specific finding text detected. Open the ticket comment for full details.";
 
             const chatText = [
               `*New ticket comment report*`,
-              `*Project:* ${projectOwner}/projects/${projectNumber} (${projectStatus})`,
               `*Ticket:* <${issue.html_url}|#${issue.number} ${issue.title}>`,
-              `*Repo:* ${owner}/${repo}`,
               `*Commenter:* ${comment.user.login}`,
-              `*Signal:* ${signal}`,
-              `*Comment:* <${comment.html_url}|Open comment>`,
               ``,
               `*Extracted findings/update:*`,
-              summary,
+              `Environment: ${environment}`,
+              `Browser: ${browser}`,
+              `Status: ${status}`,
+              `Finding: ${findings}`,
             ].join("\n");
 
             const response = await fetch(webhook, {
