@@ -1,0 +1,151 @@
+name: Google Chat QA Comment Report
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: read
+  repository-projects: read
+
+jobs:
+  report-new-ticket-comment:
+    name: Report new ticket comment
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.issue.pull_request }}
+    steps:
+      - name: Build and send Google Chat report
+        uses: actions/github-script@v7
+        env:
+          GOOGLE_CHAT_WEBHOOK: ${{ secrets.GOOGLE_CHAT_WEBHOOK }}
+          PROJECT_OWNER: Levisheshhh
+          PROJECT_NUMBER: "1"
+        with:
+          github-token: ${{ secrets.PROJECT_READ_TOKEN || github.token }}
+          script: |
+            const webhook = process.env.GOOGLE_CHAT_WEBHOOK;
+            if (!webhook) {
+              core.setFailed("Missing GOOGLE_CHAT_WEBHOOK secret.");
+              return;
+            }
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issue = context.payload.issue;
+            const comment = context.payload.comment;
+            const projectOwner = process.env.PROJECT_OWNER;
+            const projectNumber = Number(process.env.PROJECT_NUMBER);
+
+            const projectQuery = `
+              query($issueId: ID!) {
+                node(id: $issueId) {
+                  ... on Issue {
+                    projectItems(first: 20) {
+                      nodes {
+                        project {
+                          number
+                          title
+                          url
+                          owner {
+                            ... on User {
+                              login
+                            }
+                          }
+                        }
+                        fieldValues(first: 20) {
+                          nodes {
+                            ... on ProjectV2ItemFieldSingleSelectValue {
+                              name
+                              field {
+                                ... on ProjectV2FieldCommon {
+                                  name
+                                }
+                              }
+                            }
+                            ... on ProjectV2ItemFieldTextValue {
+                              text
+                              field {
+                                ... on ProjectV2FieldCommon {
+                                  name
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+
+            const projectResult = await github.graphql(projectQuery, {
+              issueId: issue.node_id,
+            });
+
+            const projectItem = projectResult.node.projectItems.nodes.find((item) => {
+              const project = item.project;
+              return project?.number === projectNumber && project?.owner?.login === projectOwner;
+            });
+
+            if (!projectItem) {
+              core.info(`Issue #${issue.number} is not in ${projectOwner}/projects/${projectNumber}; skipping.`);
+              return;
+            }
+
+            const projectStatus = projectItem.fieldValues.nodes.find((value) => {
+              return value.field?.name?.toLowerCase() === "status";
+            })?.name || "No project status";
+
+            const body = comment.body || "";
+            const normalizedLines = body
+              .replace(/\r/g, "")
+              .split("\n")
+              .map((line) => line.trim())
+              .filter(Boolean);
+
+            const findingKeywords = /\b(failed|failure|bug|issue|finding|findings|blocked|blocker|for validation|passed|status|environment|browser|expected|actual|decision|approve|condition|todo|follow[- ]?up|action)\b/i;
+            const findingLines = normalizedLines
+              .filter((line) => findingKeywords.test(line))
+              .slice(0, 12);
+
+            const summary = findingLines.length
+              ? findingLines.join("\n")
+              : normalizedLines.slice(0, 8).join("\n") || "(No comment text)";
+
+            const failedCount = (body.match(/\bfailed\b/gi) || []).length;
+            const passedCount = (body.match(/\bpassed\b/gi) || []).length;
+            const needsValidation = /\bfor validation\b/i.test(body);
+            const hasBlocker = /\b(blocked|blocker|asap|condition)\b/i.test(body);
+
+            const statusParts = [];
+            if (failedCount) statusParts.push(`${failedCount} failed mention${failedCount === 1 ? "" : "s"}`);
+            if (passedCount) statusParts.push(`${passedCount} passed mention${passedCount === 1 ? "" : "s"}`);
+            if (needsValidation) statusParts.push("needs validation");
+            if (hasBlocker) statusParts.push("blocker/condition keyword");
+            const signal = statusParts.length ? statusParts.join(" | ") : "general comment";
+
+            const chatText = [
+              `*New ticket comment report*`,
+              `*Project:* ${projectOwner}/projects/${projectNumber} (${projectStatus})`,
+              `*Ticket:* <${issue.html_url}|#${issue.number} ${issue.title}>`,
+              `*Repo:* ${owner}/${repo}`,
+              `*Commenter:* ${comment.user.login}`,
+              `*Signal:* ${signal}`,
+              `*Comment:* <${comment.html_url}|Open comment>`,
+              ``,
+              `*Extracted findings/update:*`,
+              summary,
+            ].join("\n");
+
+            const response = await fetch(webhook, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ text: chatText }),
+            });
+
+            if (!response.ok) {
+              const text = await response.text();
+              core.setFailed(`Google Chat webhook failed: ${response.status} ${text}`);
+            }
