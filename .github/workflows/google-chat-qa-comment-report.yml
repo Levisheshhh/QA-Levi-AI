@@ -126,9 +126,11 @@ jobs:
             };
 
             const isFindingStopLine = (line) => {
+              const sectionHeading = /^(description|test\s+description|details?|steps?|replication\s+steps?|steps?\s+to\s+reproduce|actual|expected|account\s+used|test\s+account|scenario|objective|result|note|comment|proof|evidence|screens?|screen\s*shots?|screen\s*recordings?)\s*:?$/i;
               return isAttachmentOrProof(line)
                 || /^[-_*]{3,}$/.test(line)
                 || /^(environment|browser|mobile device|date|status|expected|actual|description|steps?|scenario|objective|result|note|comment|repo|project|signal):/i.test(line)
+                || sectionHeading.test(line)
                 || /^the (ff|following).*(failed|passed)/i.test(line)
                 || /^go-live ticket review/i.test(line);
             };
