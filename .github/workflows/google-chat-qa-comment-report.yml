@@ -106,9 +106,9 @@ jobs:
               return match ? match.slice(match.indexOf(":") + 1).trim() : "";
             };
 
-            const environment = fieldValue("Environment") || "Not specified";
-            const browser = fieldValue("Browser") || "Not specified";
-            const status = fieldValue("Status") || "Not specified";
+            const environment = fieldValue("Environment");
+            const browser = fieldValue("Browser");
+            const status = fieldValue("Status");
 
             const isAttachmentOrProof = (line) => {
               return /^https?:\/\//i.test(line)
@@ -153,9 +153,22 @@ jobs:
             };
 
             const findingLines = extractFindings();
-            const findings = findingLines.length
-              ? findingLines.join("\n")
-              : "No findings were entered in a Findings: section.";
+            const requiredTemplateFields = [
+              ["Environment", environment],
+              ["Browser", browser],
+              ["Status", status],
+              ["Findings", findingLines.join("\n")],
+            ];
+            const missingFields = requiredTemplateFields
+              .filter(([, value]) => !value.trim())
+              .map(([name]) => name);
+
+            if (missingFields.length) {
+              core.info(`Comment #${comment.id} does not match the QA findings template. Missing: ${missingFields.join(", ")}. Skipping report.`);
+              return;
+            }
+
+            const findings = findingLines.join("\n");
 
             const chatText = [
               `*New ticket comment report*`,
