@@ -130,6 +130,7 @@ jobs:
               return isAttachmentOrProof(line)
                 || /^[-_*]{3,}$/.test(line)
                 || /^(environment|browser|mobile device|date|status|expected|actual|description|steps?|scenario|objective|result|note|comment|repo|project|signal):/i.test(line)
+                || /^(test\s+description|description)\b/i.test(line)
                 || sectionHeading.test(line)
                 || /^the (ff|following).*(failed|passed)/i.test(line)
                 || /^go-live ticket review/i.test(line);
